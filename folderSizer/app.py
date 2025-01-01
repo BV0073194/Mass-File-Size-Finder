@@ -2,7 +2,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from tkinter import Tk, filedialog
+from tkinter import Tk, filedialog, Button
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseEvent
 
@@ -21,7 +21,7 @@ def get_total_folder_size(path, max_depth=1):
         print(f"Skipping inaccessible folder: {path}")
 
     elapsed_time = time.time() - start_time
-    if elapsed_time > 3:  # If processing is slow, split further
+    if elapsed_time > 3:
         print(f"Splitting analysis for: {path}")
         total_size = split_analysis(path, max_depth + 1)
 
@@ -42,10 +42,8 @@ def analyze_subfolder(folder, max_depth=1):
 def split_analysis(path, max_depth):
     total_size = 0
     with ThreadPoolExecutor() as executor:
-        futures = []
-        for subfolder in path.iterdir():
-            if subfolder.is_dir():
-                futures.append(executor.submit(analyze_subfolder, subfolder, max_depth))
+        futures = [executor.submit(analyze_subfolder, subfolder, max_depth)
+                   for subfolder in path.iterdir() if subfolder.is_dir()]
 
         for future in as_completed(futures):
             total_size += future.result()
@@ -108,10 +106,8 @@ def analyze_and_plot(target_dir, max_workers=8):
 
         print(f"\nAnalyzing folder sizes in {directory}...\n")
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(analyze_folder, subfolder): subfolder
-                for subfolder in directory.iterdir() if subfolder.is_dir()
-            }
+            futures = {executor.submit(analyze_folder, subfolder): subfolder
+                       for subfolder in directory.iterdir() if subfolder.is_dir()}
 
             files_info = analyze_files_in_directory(directory)
 
@@ -136,26 +132,12 @@ def plot_folder_sizes(folder_sizes, files_sizes, files_info, target_dir, callbac
 
     total_dir_size = sum(total_sizes) + sum(file_values)
 
-    # Add '../' for parent navigation
-    if len(history) > 1:
-        subfolders.insert(0, Path(".."))
-        total_sizes.insert(0, 0)
-        file_sizes.insert(0, 0)
-
     fig, ax = plt.subplots(figsize=(12, 8))
     bar_width = 0.4
     x_pos = range(len(subfolders) + len(file_names))
 
     bars_total = ax.bar(x_pos[:len(subfolders)], total_sizes, width=bar_width, label='Folders', color='dodgerblue')
-    ax.bar(x_pos[:len(subfolders)], file_sizes, width=bar_width * 0.7, label='Root Files', color='orange')
-
-    bars_files = ax.bar(
-        x_pos[len(subfolders):],
-        file_values,
-        width=bar_width,
-        label='Files in Directory',
-        color='green'
-    )
+    bars_files = ax.bar(x_pos[len(subfolders):], file_values, width=bar_width, label='Files', color='green')
 
     plt.xticks(
         x_pos,
@@ -165,34 +147,52 @@ def plot_folder_sizes(folder_sizes, files_sizes, files_info, target_dir, callbac
     )
     plt.tight_layout()
 
-    loading_text = None
+    annot = ax.annotate("", xy=(0, 0), xytext=(10, 10),
+                        textcoords="offset points", bbox=dict(boxstyle="round", fc="w"),
+                        arrowprops=dict(arrowstyle="->"))
+    annot.set_visible(False)
 
-    def show_loading_text(subfolder_path):
-        nonlocal loading_text
-        loading_text = ax.text(
-            0.5, 0.5, f"Drilling down into:\n{subfolder_path.name}...",
-            fontsize=16, ha='center', va='center', transform=ax.transAxes,
-            bbox=dict(boxstyle="round,pad=1", fc="orange", ec="black")
-        )
-        fig.canvas.draw_idle()
-
-    def on_click(event: MouseEvent):
-        for i, bar in enumerate(bars_total):
+    def update_tooltip(event):
+        vis = annot.get_visible()
+        for i, bar in enumerate(bars_total + bars_files):
             if bar.contains(event)[0]:
-                subfolder_path = subfolders[i]
-                show_loading_text(subfolder_path)
-                plt.pause(1)
-                plt.close(fig)
-                if subfolder_path.name == "..":
-                    history.pop()
+                x = bar.get_x() + bar.get_width() / 2
+                y = bar.get_height()
+                annot.xy = (x, y)
+                if i < len(subfolders):
+                    label = subfolders[i].name
+                    size = total_sizes[i]
                 else:
-                    history.append(subfolder_path)
-                callback(subfolder_path)
+                    label = file_names[i - len(subfolders)].name
+                    size = file_values[i - len(subfolders)]
+                    percentage = (size / total_dir_size) * 100
+                    label += f" - {format_size(size)} | {percentage:.2f}% of total"
+                annot.set_text(label)
+                annot.set_visible(True)
+                fig.canvas.draw_idle()
+                return
+        if vis:
+            annot.set_visible(False)
+            fig.canvas.draw_idle()
 
-    fig.canvas.mpl_connect("button_press_event", on_click)
+    fig.canvas.mpl_connect("motion_notify_event", update_tooltip)
+
+    def go_back():
+        if len(history) > 1:
+            history.pop()
+            plt.close(fig)
+            callback(history[-1])
+
+    back_button = Button(plt.gcf().canvas.get_tk_widget(), text="..", command=go_back)
+    back_button.place(x=10, y=10)
+
     plt.show()
 
 
 if __name__ == "__main__":
-    target_dir = filedialog.askdirectory(title="Select Folder to Analyze")
-    analyze_and_plot(target_dir)
+    while True:
+        target_dir = filedialog.askdirectory(title="Select Folder to Analyze")
+        if not target_dir:
+            print("No folder selected. Exiting...")
+            break
+        analyze_and_plot(target_dir)
