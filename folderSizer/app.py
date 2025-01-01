@@ -102,6 +102,8 @@ def plot_folder_sizes(folder_sizes, files_sizes, target_dir, callback, history):
                         arrowprops=dict(arrowstyle="->"))
     annot.set_visible(False)
 
+    loading_text = None
+
     def update_tooltip(event: MouseEvent):
         vis = annot.get_visible()
         for i, bar in enumerate(bars_total):
@@ -119,18 +121,38 @@ def plot_folder_sizes(folder_sizes, files_sizes, target_dir, callback, history):
             annot.set_visible(False)
             fig.canvas.draw_idle()
 
+    def show_loading_text(subfolder_path):
+        nonlocal loading_text
+        loading_text = ax.text(
+            0.5, 0.5, f"Drilling down into:\n{subfolder_path.name}...",
+            fontsize=16, ha='center', va='center', transform=ax.transAxes,
+            bbox=dict(boxstyle="round,pad=1", fc="orange", ec="black")
+        )
+        fig.canvas.draw_idle()
+
+    def hide_loading_text():
+        nonlocal loading_text
+        if loading_text:
+            loading_text.remove()
+            loading_text = None
+            fig.canvas.draw_idle()
+
     def on_click(event: MouseEvent):
         for i, bar in enumerate(bars_total):
             if bar.contains(event)[0]:
                 subfolder_path = subfolders[i]
                 print(f"\nDrilling down into: {subfolder_path}...\n")
+                show_loading_text(subfolder_path)
+                fig.canvas.draw_idle()
+                plt.pause(1)  # Pause to show loading message
                 plt.close(fig)
                 history.append(subfolder_path)
+                hide_loading_text()
                 callback(subfolder_path)
 
     def on_right_click(event: MouseEvent):
-        if event.button == 3 and len(history) > 1:  # Right-click to go back
-            history.pop()  # Remove current path from history
+        if event.button == 3 and len(history) > 1:
+            history.pop()
             parent_dir = history[-1]
             print(f"\nReturning to: {parent_dir}...\n")
             plt.close(fig)
